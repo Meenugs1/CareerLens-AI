@@ -1,0 +1,36 @@
+# Python environments and generated files
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pkl
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# IDE and OS files
+.idea/
+.DS_Store
+*.suo
+*.user
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Raw source dataset stays local
+data/raw/
+
+# Ignore generated processed files, but include the runtime dataset
+data/processed/*
+!data/processed/jobs_cleaned.xlsx
+
+# Dataset files are not redistributed with this repository
+/data/processed/jobs_cleaned.xlsx

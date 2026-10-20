@@ -39,7 +39,7 @@ FastAPI exposes feature endpoints under `backend/main.py`. Services reuse the ca
 
 ## Backend Setup
 
-From the repository root on Windows PowerShell:
+From the repository root, open PowerShell:
 
 ```powershell
 python -m venv venv
@@ -47,33 +47,30 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-The existing workspace also contains a configured `venv`. Do not commit the environment directory.
-
 ## Frontend Setup
 
 ```powershell
-Push-Location frontend
+cd frontend
 npm install
-Pop-Location
 ```
 
 ## Run Locally
 
-Terminal 1:
+**Terminal 1 — Backend** (from the repository root):
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.main:app --reload --port 8000
 ```
 
-Terminal 2:
+**Terminal 2 — Frontend** (from the repository root):
 
 ```powershell
-Push-Location frontend
+cd frontend
 npm run dev
 ```
 
-Open `http://localhost:5174`.
+Open the local URL printed by Vite in your terminal, expected to be `http://localhost:5174` for your current configuration.
 
 ## API Overview
 

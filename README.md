@@ -106,7 +106,35 @@ screenshots/   Portfolio screenshot destination
 
 ## Screenshots
 
-The `screenshots/` directory is currently empty. Recommended portfolio captures are listed in `DEMO_FLOW.md` and include the Job Explorer, recommendation results, Market Intelligence, Skill Gap, Career Simulator, Career Switch, Career Path, What Can I Become?, and Company Intelligence views.
+## Screenshots
+
+## Screenshots
+
+The following screenshots showcase the main features of CareerLens AI, including job exploration, market insights, skill-gap analysis, career planning, and company intelligence.
+
+### 1. Job Explorer
+![Job Explorer](screenshots/01-job-explorer.png)
+
+### 2. Market Intelligence
+![Market Intelligence](screenshots/02-market-intelligence.png)
+
+### 3. Skill Gap Analyzer
+![Skill Gap Analyzer](screenshots/03-skill%20gap%20analyzer.png)
+
+### 4. Career Simulator
+![Career Simulator](screenshots/04-career%20simulator.png)
+
+### 5. Career Switch Analyzer
+![Career Switch Analyzer](screenshots/05-career%20switch.png)
+
+### 6. Career Path Explorer
+![Career Path Explorer](screenshots/06-career%20path%20explorer.png)
+
+### 7. What Can I Become?
+![What Can I Become](screenshots/07-What%20can%20i%20become.png)
+
+### 8. Company Intelligence
+![Company Intelligence](screenshots/08-company%20intelligence.png)
 
 ## Future Improvements
 

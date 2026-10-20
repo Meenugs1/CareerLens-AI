@@ -70,7 +70,7 @@ cd frontend
 npm run dev
 ```
 
-Open the local URL printed by Vite in your terminal, expected to be `http://localhost:5174` for your current configuration.
+Open http://localhost:5174 in your browser.
 
 ## API Overview
 

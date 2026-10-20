@@ -104,9 +104,6 @@ sql/           SQL work
 screenshots/   Portfolio screenshot destination
 ```
 
-## Screenshots
-
-## Screenshots
 
 ## Screenshots
 

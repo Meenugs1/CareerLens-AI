@@ -1,6 +1,8 @@
 import os
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from backend import recommendation_service as dataset_service
 from backend import market_intelligence_service
+from backend import company_intelligence_service
 from backend.main import app
 
 
@@ -117,6 +120,104 @@ class BackendDeploymentTests(unittest.TestCase):
                 response = self.client.request(method, url, json=body)
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertIsInstance(response.json(), dict)
+
+    def test_company_search_empty_query_and_common_name(self):
+        empty_response = self.client.get("/companies?query=%20%20")
+        self.assertEqual(empty_response.status_code, 200)
+        self.assertEqual(empty_response.json()["query"], "")
+        self.assertEqual(len(empty_response.json()["companies"]), 2)
+
+        common_response = self.client.get("/companies?query=acme")
+        self.assertEqual(common_response.status_code, 200)
+        self.assertEqual(common_response.json()["companies"][0]["company"], "Acme Analytics")
+        self.assertEqual(common_response.json()["companies"][0]["job_count"], 9)
+
+    def test_company_search_unknown_name_returns_no_matches(self):
+        response = self.client.get("/companies?query=NoSuchEmployer")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["companies"], [])
+
+    def test_company_intelligence_reports_missing_salary_and_ratings(self):
+        sparse_dataset = self.dataset.iloc[[0]].copy()
+        sparse_dataset = sparse_dataset.assign(
+            companyname="Sparse Employer",
+            currency="USD",
+            salary_available=False,
+            average_salary=pd.Series([float("nan")], index=sparse_dataset.index),
+            salary_range=None,
+            aggregaterating=float("nan"),
+            reviewscount=float("nan"),
+        )
+        previous_index = company_intelligence_service._company_index_cache.copy()
+        company_intelligence_service._company_index_cache.clear()
+        try:
+            with patch.object(
+                company_intelligence_service,
+                "_load_dataset",
+                return_value=sparse_dataset,
+            ):
+                response = self.client.get(
+                    "/company-intelligence?company=Sparse%20Employer"
+                )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["success"])
+            self.assertFalse(payload["salary"]["available"])
+            self.assertFalse(payload["ratings"]["available"])
+        finally:
+            company_intelligence_service._company_index_cache.clear()
+            company_intelligence_service._company_index_cache.update(previous_index)
+
+    def test_concurrent_company_requests_build_index_once(self):
+        frame = self.dataset.copy()
+        previous_index = company_intelligence_service._company_index_cache.copy()
+        company_intelligence_service._company_index_cache.clear()
+        original_extract_skills = company_intelligence_service.extract_skills
+        count_lock = threading.Lock()
+        extraction_count = 0
+        start_barrier = threading.Barrier(6)
+
+        def counted_extract_skills(value):
+            nonlocal extraction_count
+            with count_lock:
+                extraction_count += 1
+            return original_extract_skills(value)
+
+        def build_index(_):
+            start_barrier.wait()
+            return company_intelligence_service._build_company_index(frame)
+
+        try:
+            with patch.object(
+                company_intelligence_service,
+                "extract_skills",
+                side_effect=counted_extract_skills,
+            ):
+                with ThreadPoolExecutor(max_workers=6) as executor:
+                    indexes = list(executor.map(build_index, range(6)))
+            self.assertTrue(all(index is indexes[0] for index in indexes))
+            self.assertEqual(extraction_count, len(frame))
+        finally:
+            company_intelligence_service._company_index_cache.clear()
+            company_intelligence_service._company_index_cache.update(previous_index)
+
+    def test_company_index_failure_returns_sanitized_server_error(self):
+        original_index = company_intelligence_service._index
+        try:
+            company_intelligence_service._index = lambda: (_ for _ in ()).throw(
+                RuntimeError("private path and secret-value")
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/companies?query=Acme")
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(
+                response.json(),
+                {"detail": "The request could not be completed."},
+            )
+            self.assertNotIn("private path", response.text)
+            self.assertNotIn("secret-value", response.text)
+        finally:
+            company_intelligence_service._index = original_index
 
     def test_production_cors_preflight(self):
         response = self.client.options(

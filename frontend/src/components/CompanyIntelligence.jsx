@@ -15,8 +15,11 @@ function CompanyIntelligence() {
       return undefined;
     }
 
-    let cancelled = false;
-    fetch(`${API_URL}/companies?query=${encodeURIComponent(query)}`)
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      fetch(`${API_URL}/companies?query=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      })
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Server returned ${response.status}`);
@@ -24,19 +27,19 @@ function CompanyIntelligence() {
         return response.json();
       })
       .then((data) => {
-        if (!cancelled) {
-          setSuggestions(data.companies || []);
-        }
+        setSuggestions(data.companies || []);
       })
       .catch((requestError) => {
-        if (!cancelled) {
+        if (requestError.name !== "AbortError") {
           console.error(requestError);
           setSuggestions([]);
         }
       });
+    }, 250);
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [companyInput]);
 

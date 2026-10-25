@@ -2,6 +2,7 @@
 
 from collections import Counter, defaultdict
 import math
+import threading
 
 import pandas as pd
 
@@ -18,6 +19,7 @@ ROLE_LIMIT = 10
 LOCATION_LIMIT = 10
 SKILL_LIMIT = 15
 _company_index_cache = {}
+_company_index_lock = threading.Lock()
 
 
 def _numeric_value(value):
@@ -50,78 +52,82 @@ def _build_company_index(df):
     if cache_key in _company_index_cache:
         return _company_index_cache[cache_key]
 
-    profiles = defaultdict(_new_company_profile)
-    selected_columns = [
-        "companyname",
-        "companyid",
-        "title",
-        "location",
-        "tagsandskills",
-        "currency",
-        "salary_available",
-        "average_salary",
-        "salary_range",
-        "aggregaterating",
-        "reviewscount",
-    ]
+    with _company_index_lock:
+        if cache_key in _company_index_cache:
+            return _company_index_cache[cache_key]
 
-    for row in df[selected_columns].itertuples(index=False, name=None):
-        (
-            company_value,
-            company_id,
-            title_value,
-            location_value,
-            tags,
-            currency,
-            salary_available,
-            average_salary,
-            salary_range,
-            rating,
-            review_count,
-        ) = row
-        company = _valid_dimension(company_value)
-        if company is None:
-            continue
+        profiles = defaultdict(_new_company_profile)
+        selected_columns = [
+            "companyname",
+            "companyid",
+            "title",
+            "location",
+            "tagsandskills",
+            "currency",
+            "salary_available",
+            "average_salary",
+            "salary_range",
+            "aggregaterating",
+            "reviewscount",
+        ]
 
-        profile = profiles[company.casefold()]
-        profile["names"][company] += 1
-        valid_company_id = _valid_dimension(company_id)
-        if valid_company_id is not None:
-            profile["company_ids"][valid_company_id] += 1
-        profile["job_count"] += 1
+        for row in df[selected_columns].itertuples(index=False, name=None):
+            (
+                company_value,
+                company_id,
+                title_value,
+                location_value,
+                tags,
+                currency,
+                salary_available,
+                average_salary,
+                salary_range,
+                rating,
+                review_count,
+            ) = row
+            company = _valid_dimension(company_value)
+            if company is None:
+                continue
 
-        title = _valid_dimension(title_value)
-        if title is not None:
-            role_family = _title_family(title) or title.casefold()
-            profile["role_titles"][role_family][title] += 1
+            profile = profiles[company.casefold()]
+            profile["names"][company] += 1
+            valid_company_id = _valid_dimension(company_id)
+            if valid_company_id is not None:
+                profile["company_ids"][valid_company_id] += 1
+            profile["job_count"] += 1
 
-        location = _valid_dimension(location_value)
-        if location is not None:
-            profile["locations"][location] += 1
+            title = _valid_dimension(title_value)
+            if title is not None:
+                role_family = _title_family(title) or title.casefold()
+                profile["role_titles"][role_family][title] += 1
 
-        profile["skill_counts"].update(extract_skills(tags))
+            location = _valid_dimension(location_value)
+            if location is not None:
+                profile["locations"][location] += 1
 
-        is_salary_record = (
-            str(currency).upper() == "INR"
-            and pd.notna(salary_available)
-            and bool(salary_available)
-        )
-        salary_value = _numeric_value(average_salary)
-        if is_salary_record and salary_value is not None:
-            profile["salary_values"].append(salary_value)
-            valid_range = _valid_dimension(salary_range)
-            if valid_range is not None:
-                profile["salary_ranges"][valid_range] += 1
+            profile["skill_counts"].update(extract_skills(tags))
 
-        rating_value = _numeric_value(rating)
-        if rating_value is not None:
-            profile["ratings"].append(rating_value)
-        review_value = _numeric_value(review_count)
-        if review_value is not None:
-            profile["review_counts"].append(review_value)
+            is_salary_record = (
+                str(currency).upper() == "INR"
+                and pd.notna(salary_available)
+                and bool(salary_available)
+            )
+            salary_value = _numeric_value(average_salary)
+            if is_salary_record and salary_value is not None:
+                profile["salary_values"].append(salary_value)
+                valid_range = _valid_dimension(salary_range)
+                if valid_range is not None:
+                    profile["salary_ranges"][valid_range] += 1
 
-    _company_index_cache[cache_key] = dict(profiles)
-    return _company_index_cache[cache_key]
+            rating_value = _numeric_value(rating)
+            if rating_value is not None:
+                profile["ratings"].append(rating_value)
+            review_value = _numeric_value(review_count)
+            if review_value is not None:
+                profile["review_counts"].append(review_value)
+
+        _company_index_cache[cache_key] = dict(profiles)
+        return _company_index_cache[cache_key]
 
 
 def _index():

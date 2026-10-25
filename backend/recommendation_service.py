@@ -13,10 +13,13 @@ experience match, location match, work mode match, freshness,
 seniority, fresher suitability) are copied over unchanged from
 V4.2 - nothing about the "brains" of the engine was redesigned.
 """
+import logging
 import math
 import os
 import pickle
 import re
+import threading
+import time
 from html import unescape
 from pathlib import Path
 
@@ -33,11 +36,40 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = BASE_DIR / "data" / "processed" / "jobs_cleaned.xlsx"
 CACHE_FILE = BASE_DIR / "data" / "processed" / "jobs_cleaned.cache.pkl"
 _JOB_TYPE_CLASSIFIER_VERSION = 8
+_DATASET_REQUIRED_COLUMNS = {
+    "title",
+    "jobid",
+    "currency",
+    "companyname",
+    "tagsandskills",
+    "salary",
+    "location",
+    "companyid",
+    "reviewscount",
+    "aggregaterating",
+    "jobdescription",
+    "minimumsalary",
+    "maximumsalary",
+    "minimumexperience",
+    "maximumexperience",
+    "days_ago",
+    "salary_available",
+    "average_salary",
+    "salary_range",
+}
+
+logger = logging.getLogger(__name__)
+_DATASET_LOCK = threading.Lock()
+_JOB_TYPE_LOCK = threading.Lock()
+
+
+class DatasetUnavailableError(RuntimeError):
+    """Raised when the configured job dataset cannot be used."""
 
 def ensure_dataset_exists():
     """Download the private dataset from Hugging Face if it is missing."""
 
-    if DATA_FILE.exists():
+    if DATA_FILE.is_file():
         return
 
     hf_token = os.getenv("HF_TOKEN")
@@ -47,7 +79,7 @@ def ensure_dataset_exists():
     )
 
     if not hf_token:
-        raise RuntimeError(
+        raise DatasetUnavailableError(
             "Dataset is missing and HF_TOKEN is not configured."
         )
 
@@ -55,8 +87,15 @@ def ensure_dataset_exists():
         f"https://huggingface.co/datasets/"
         f"{dataset_repo}/resolve/main/jobs_cleaned.xlsx"
     )
+    logger.info("Downloading the configured private job dataset.")
 
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Dataset storage setup failed (%s).", type(exc).__name__)
+        raise DatasetUnavailableError(
+            "Dataset storage is unavailable on this service."
+        ) from None
     temporary_file = DATA_FILE.with_suffix(".xlsx.tmp")
 
     try:
@@ -66,6 +105,11 @@ def ensure_dataset_exists():
             stream=True,
             timeout=(30, 300),
         ) as response:
+            if response.status_code in {401, 403, 404}:
+                raise DatasetUnavailableError(
+                    "The private dataset could not be accessed. Verify the "
+                    "HF_TOKEN permissions and HF_DATASET_REPO setting."
+                )
             response.raise_for_status()
 
             with temporary_file.open("wb") as file:
@@ -73,11 +117,34 @@ def ensure_dataset_exists():
                     if chunk:
                         file.write(chunk)
 
+        if not temporary_file.is_file() or temporary_file.stat().st_size == 0:
+            raise DatasetUnavailableError(
+                "The dataset download completed without a usable file."
+            )
         temporary_file.replace(DATA_FILE)
-
+        logger.info(
+            "Downloaded the private job dataset (%s bytes).",
+            DATA_FILE.stat().st_size,
+        )
+    except DatasetUnavailableError:
+        raise
+    except requests.RequestException as exc:
+        logger.warning("Dataset download failed (%s).", type(exc).__name__)
+        raise DatasetUnavailableError(
+            "The job dataset could not be downloaded. Check the Hugging Face "
+            "repository settings and retry."
+        ) from None
+    except OSError as exc:
+        logger.warning("Dataset download could not be saved (%s).", type(exc).__name__)
+        raise DatasetUnavailableError(
+            "The downloaded job dataset could not be saved on this service."
+        ) from None
     finally:
         if temporary_file.exists():
-            temporary_file.unlink()
+            try:
+                temporary_file.unlink()
+            except OSError:
+                logger.warning("Could not remove a partial dataset download.")
 
 _INTERNSHIP_TEXT_PATTERN = (
     r"\binterns?\b|\binternships?\b|\bapprentices?\b|\bapprenticeships?\b"
@@ -151,73 +218,115 @@ def _build_inferred_job_types(df):
 
 
 def _load_dataset():
-
     global _dataset_cache
-
-    ensure_dataset_exists()
 
     if _dataset_cache is not None:
         return _dataset_cache
 
-    source_mtime_ns = DATA_FILE.stat().st_mtime_ns
+    with _DATASET_LOCK:
+        if _dataset_cache is not None:
+            return _dataset_cache
 
-    if CACHE_FILE.exists():
         try:
-            cached = pd.read_pickle(CACHE_FILE)
-            if (
-                isinstance(cached, dict)
-                and cached.get("source_mtime_ns") == source_mtime_ns
-                and isinstance(cached.get("dataframe"), pd.DataFrame)
-            ):
-                _dataset_cache = cached["dataframe"]
+            ensure_dataset_exists()
+            if not DATA_FILE.is_file() or DATA_FILE.stat().st_size == 0:
+                raise DatasetUnavailableError(
+                    "The job dataset file is missing or empty."
+                )
+            source_mtime_ns = DATA_FILE.stat().st_mtime_ns
+        except DatasetUnavailableError:
+            raise
+        except OSError as exc:
+            logger.error("Dataset file access failed (%s).", type(exc).__name__)
+            raise DatasetUnavailableError(
+                "The job dataset file is unavailable on this service."
+            ) from None
+
+        if CACHE_FILE.is_file():
+            try:
+                cached = pd.read_pickle(CACHE_FILE)
+                cached_frame = cached.get("dataframe") if isinstance(cached, dict) else None
                 if (
-                    cached.get("job_type_classifier_version")
-                    != _JOB_TYPE_CLASSIFIER_VERSION
-                    or "_inferred_job_type" not in _dataset_cache.columns
-                    or "_is_verified_internship" not in _dataset_cache.columns
+                    isinstance(cached, dict)
+                    and cached.get("source_mtime_ns") == source_mtime_ns
+                    and isinstance(cached_frame, pd.DataFrame)
+                    and _validate_dataset(cached_frame)
                 ):
-                    _dataset_cache["_inferred_job_type"] = _build_inferred_job_types(
-                        _dataset_cache
-                    )
-                    _dataset_cache["_is_verified_internship"] = (
-                        _build_verified_internship_flags(_dataset_cache)
-                    )
-                    try:
-                        pd.to_pickle(
-                            {
-                                "source_mtime_ns": source_mtime_ns,
-                                "job_type_classifier_version": _JOB_TYPE_CLASSIFIER_VERSION,
-                                "dataframe": _dataset_cache,
-                            },
-                            CACHE_FILE,
+                    if (
+                        cached.get("job_type_classifier_version")
+                        != _JOB_TYPE_CLASSIFIER_VERSION
+                    ):
+                        cached_frame.drop(
+                            columns=[
+                                "_inferred_job_type",
+                                "_is_verified_internship",
+                            ],
+                            errors="ignore",
+                            inplace=True,
                         )
-                    except OSError:
-                        pass
-                return _dataset_cache
-        except (EOFError, OSError, pickle.UnpicklingError, TypeError, ValueError):
-            pass
+                    _dataset_cache = cached_frame
+                    logger.info("Loaded dataset cache with %s rows.", len(cached_frame))
+                    return _dataset_cache
+            except (EOFError, OSError, pickle.UnpicklingError, TypeError, ValueError):
+                logger.warning("Dataset cache is invalid; rebuilding from source.")
 
-    _dataset_cache = pd.read_excel(DATA_FILE)
-    _dataset_cache["_inferred_job_type"] = _build_inferred_job_types(
-        _dataset_cache
-    )
-    _dataset_cache["_is_verified_internship"] = (
-        _build_verified_internship_flags(_dataset_cache)
-    )
+        load_started = time.perf_counter()
+        logger.info("Loading job dataset from Excel.")
+        try:
+            dataframe = pd.read_excel(DATA_FILE)
+            _validate_dataset(dataframe, raise_error=True)
+        except DatasetUnavailableError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Dataset parsing or preprocessing failed (%s).", type(exc).__name__
+            )
+            raise DatasetUnavailableError(
+                "The job dataset is malformed or could not be processed."
+            ) from None
 
+        _dataset_cache = dataframe
+        _write_dataset_cache(dataframe, source_mtime_ns)
+        logger.info(
+            "Loaded %s job records in %.2f seconds.",
+            len(dataframe),
+            time.perf_counter() - load_started,
+        )
+        return _dataset_cache
+
+
+def _validate_dataset(dataframe, raise_error=False):
+    if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+        message = "The job dataset is empty or not a valid table."
+    elif _DATASET_REQUIRED_COLUMNS - set(dataframe.columns):
+        message = "The job dataset is missing required fields."
+    else:
+        return True
+
+    if raise_error:
+        raise DatasetUnavailableError(message)
+    return False
+
+
+def _write_dataset_cache(dataframe, source_mtime_ns):
+    temporary_cache = CACHE_FILE.with_suffix(CACHE_FILE.suffix + ".tmp")
     try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         pd.to_pickle(
             {
                 "source_mtime_ns": source_mtime_ns,
                 "job_type_classifier_version": _JOB_TYPE_CLASSIFIER_VERSION,
-                "dataframe": _dataset_cache,
+                "dataframe": dataframe,
             },
-            CACHE_FILE,
+            temporary_cache,
         )
-    except OSError:
-        pass
-
-    return _dataset_cache
+        temporary_cache.replace(CACHE_FILE)
+    except OSError as exc:
+        logger.info("Dataset cache could not be persisted (%s).", type(exc).__name__)
+        try:
+            temporary_cache.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove a partial dataset cache.")
 
 
 def _build_verified_internship_flags(df):
@@ -1069,7 +1178,16 @@ def filter_jobs_by_job_type(df, requested_job_type):
 
     normalized_request = normalize_job_type(requested_job_type)
     if normalized_request == "any":
-        return df.copy()
+        return df
+
+    with _JOB_TYPE_LOCK:
+        if "_inferred_job_type" not in df.columns:
+            df["_inferred_job_type"] = _build_inferred_job_types(df)
+        if (
+            normalized_request == "internship"
+            and "_is_verified_internship" not in df.columns
+        ):
+            df["_is_verified_internship"] = _build_verified_internship_flags(df)
 
     job_type_candidates = [
         "jobtype",

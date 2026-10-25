@@ -1,23 +1,28 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from typing import List
 
 from backend.market_intelligence_service import get_market_intelligence
-from backend.recommendation_service import _load_dataset, get_recommendations
+from backend.recommendation_service import (
+    DatasetUnavailableError,
+    _load_dataset,
+    get_recommendations,
+)
 from backend.skill_gap_service import analyze_skill_gap
 from backend.career_simulator_service import simulate_skill_change
 from backend.career_switch_service import analyze_career_switch
-from backend.career_path_service import _build_title_profiles, explore_career_path
-from backend.what_can_i_become_service import (
-    _build_matching_index,
-    find_matching_roles,
-)
+from backend.career_path_service import explore_career_path
+from backend.what_can_i_become_service import find_matching_roles
 from backend.company_intelligence_service import (
-    _build_company_index,
     get_company_intelligence,
     search_companies,
 )
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -29,10 +34,35 @@ app = FastAPI(
 
 @app.on_event("startup")
 def preload_recommendation_dataset():
-    dataframe = _load_dataset()
-    _build_title_profiles(dataframe)
-    _build_matching_index(dataframe)
-    _build_company_index(dataframe)
+    try:
+        _load_dataset()
+    except DatasetUnavailableError as exc:
+        logger.error("Dataset unavailable during startup: %s", exc)
+
+
+@app.exception_handler(DatasetUnavailableError)
+async def handle_dataset_unavailable(
+    request: Request,
+    exc: DatasetUnavailableError,
+):
+    logger.warning("Dataset-backed request unavailable: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": str(exc)},
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_error(request: Request, exc: Exception):
+    logger.error(
+        "Unhandled API error for %s (%s).",
+        request.url.path,
+        type(exc).__name__,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "The request could not be completed."},
+    )
 
 
 # ============================================================

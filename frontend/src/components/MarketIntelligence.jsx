@@ -1,6 +1,6 @@
+import API_URL from "../config/api.js";
 import { useEffect, useRef, useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
 
 const overviewCards = [
   ["Total Jobs", "total_jobs"],

@@ -1,3 +1,4 @@
+import API_URL from "./config/api.js";
 import { useState } from "react";
 import "./App.css";
 import Header from "./components/Header";
@@ -12,7 +13,6 @@ import SearchForm from "./components/SearchForm";
 import SkillGap from "./components/SkillGap";
 import SummaryCards from "./components/SummaryCards";
 
-const API_URL = "http://127.0.0.1:8000";
 
 function App() {
   const [results, setResults] = useState([]);

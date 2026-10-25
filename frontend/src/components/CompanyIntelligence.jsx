@@ -1,6 +1,6 @@
+﻿import API_URL from "../config/api.js";
 import { useEffect, useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
 
 function CompanyIntelligence() {
   const [companyInput, setCompanyInput] = useState("");

@@ -13,14 +13,15 @@ experience match, location match, work mode match, freshness,
 seniority, fresher suitability) are copied over unchanged from
 V4.2 - nothing about the "brains" of the engine was redesigned.
 """
-
 import math
+import os
 import pickle
 import re
 from html import unescape
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 
 # ============================================================
@@ -32,6 +33,52 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = BASE_DIR / "data" / "processed" / "jobs_cleaned.xlsx"
 CACHE_FILE = BASE_DIR / "data" / "processed" / "jobs_cleaned.cache.pkl"
 _JOB_TYPE_CLASSIFIER_VERSION = 8
+
+def ensure_dataset_exists():
+    """Download the private dataset from Hugging Face if it is missing."""
+
+    if DATA_FILE.exists():
+        return
+
+    hf_token = os.getenv("HF_TOKEN")
+    dataset_repo = os.getenv(
+        "HF_DATASET_REPO",
+        "Meenugs1/careerlens-jobs-data",
+    )
+
+    if not hf_token:
+        raise RuntimeError(
+            "Dataset is missing and HF_TOKEN is not configured."
+        )
+
+    download_url = (
+        f"https://huggingface.co/datasets/"
+        f"{dataset_repo}/resolve/main/jobs_cleaned.xlsx"
+    )
+
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary_file = DATA_FILE.with_suffix(".xlsx.tmp")
+
+    try:
+        with requests.get(
+            download_url,
+            headers={"Authorization": f"Bearer {hf_token}"},
+            stream=True,
+            timeout=(30, 300),
+        ) as response:
+            response.raise_for_status()
+
+            with temporary_file.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        file.write(chunk)
+
+        temporary_file.replace(DATA_FILE)
+
+    finally:
+        if temporary_file.exists():
+            temporary_file.unlink()
+
 _INTERNSHIP_TEXT_PATTERN = (
     r"\binterns?\b|\binternships?\b|\bapprentices?\b|\bapprenticeships?\b"
 )
@@ -106,6 +153,8 @@ def _build_inferred_job_types(df):
 def _load_dataset():
 
     global _dataset_cache
+
+    ensure_dataset_exists()
 
     if _dataset_cache is not None:
         return _dataset_cache

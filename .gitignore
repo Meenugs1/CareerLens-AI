@@ -34,3 +34,5 @@ data/processed/*
 
 # Dataset files are not redistributed with this repository
 /data/processed/jobs_cleaned.xlsx
+.vercel
+.env*

@@ -1,7 +1,7 @@
+import API_URL from "../config/api.js";
 import { useState } from "react";
 import { parseSkillInput } from "../utils/skillInput";
 
-const API_URL = "http://127.0.0.1:8000";
 
 function CareerSwitch() {
   const [currentRole, setCurrentRole] = useState("");

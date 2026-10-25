@@ -2,6 +2,12 @@
 
 CareerLens is a dataset-derived job-market exploration application. It combines job recommendations with market, skill, career, and company analysis so users can inspect the evidence behind each result.
 
+## 🚀 Live Demo
+
+**Try CareerLens AI here:** https://career-lens-ai-khaki.vercel.app/
+
+Explore job recommendations, company intelligence, and job-market insights through the live application.
+
 ## Problem Statement
 
 Job seekers often need to compare roles, skills, locations, companies, and observed demand in one place. CareerLens makes those comparisons using the current cleaned job dataset rather than unsupported career or hiring claims.
